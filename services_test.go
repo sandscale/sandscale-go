@@ -712,3 +712,32 @@ func TestParseEvent(t *testing.T) {
 		t.Fatal("a garbled body is an error")
 	}
 }
+
+func TestStreamLogsLongRunReconnectsWhilePrintingProgress(t *testing.T) {
+	m := newMock(t)
+	conns := 0
+	m.on("GET /api/v1/sandbox/instances/sb1/logs", func(w http.ResponseWriter, r *http.Request) {
+		conns++
+		if conns <= 6 { // an idle-timeout proxy closes the connection after every chunk
+			sse(w, fmt.Sprintf("event: chunk\ndata: {\"stream\":\"stdout\",\"data\":\"%d\",\"chunk_index\":%d}\n\n", conns, conns-1))
+			return
+		}
+		sse(w, "event: done\ndata: {\"exit_code\":0}\n\n")
+	})
+	var got string
+	end, err := m.client().Sandboxes.StreamLogs(ctx(), "sb1", "r1", func(c OutputChunk) error { got += c.Data; return nil })
+	if err != nil || got != "123456" || end == nil || conns != 7 {
+		t.Fatalf("got %q end=%+v err=%v conns=%d", got, end, err, conns)
+	}
+}
+
+func TestWriteEmptyFile(t *testing.T) {
+	m := newMock(t)
+	m.json("PUT /api/v1/sandbox/instances/sb1/files", 200, `{}`)
+	if err := m.client().Sandboxes.WriteFile(ctx(), "sb1", "/workspace/empty", nil); err != nil {
+		t.Fatal(err)
+	}
+	if body := bodyOf(t, m.last()); body["content"] != "" {
+		t.Fatalf("an empty file is an empty string, not null: %v", body)
+	}
+}

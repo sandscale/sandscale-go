@@ -516,8 +516,12 @@ func (s *SandboxesService) StreamLogs(ctx context.Context, id, runID string, fn 
 		if err != nil {
 			return nil, err
 		}
+		before := next
 		end, done, err := readLogEvents(resp.Body, runID, &next, fn)
 		resp.Body.Close()
+		if next != before {
+			reconnects = 0 // the connection made progress: a long run may reconnect as often as it must
+		}
 		if err != nil {
 			var cb callbackError
 			if errors.As(err, &cb) {
@@ -638,6 +642,9 @@ func (s *SandboxesService) WriteFile(ctx context.Context, id, path string, data 
 		return err
 	}
 	cc := applyCall(opts)
+	if data == nil {
+		data = []byte{} // an empty file, not null
+	}
 	body := map[string]any{"path": path, "content": data}
 	if cc.fileMode != "" {
 		body["mode"] = cc.fileMode
